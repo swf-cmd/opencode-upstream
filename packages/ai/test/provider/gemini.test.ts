@@ -96,6 +96,23 @@ describe("Gemini route", () => {
     }),
   )
 
+  it.effect("leaves the system instruction, tools, and tool config to cached content", () =>
+    Effect.gen(function* () {
+      const prepared = yield* compileRequest({
+        ...request,
+        tools: [ToolDefinition.make({ name: "lookup", description: "Lookup data", inputSchema: { type: "object" } })],
+        toolChoice: { type: "required" },
+        providerOptions: { cachedContent: "cachedContents/example" },
+      })
+
+      expect(prepared.body).toEqual({
+        cachedContent: "cachedContents/example",
+        contents: [{ role: "user", parts: [{ text: "Say hello." }] }],
+        generationConfig: { maxOutputTokens: 20, temperature: 0 },
+      })
+    }),
+  )
+
   it.effect("fits the thinking budget to half the output limit", () =>
     Effect.gen(function* () {
       const thinkingBudget = (budget: number, maxTokens = 32_000) =>

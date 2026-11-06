@@ -443,8 +443,10 @@ const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest) {
 
 const fromRequest = Effect.fn("Gemini.fromRequest")(function* (request: LLMRequest) {
   const flattened = ProviderShared.flattenToolRequest(request)
-  const hasTools = flattened.tools.length > 0
   const options = yield* decodeOptions(request.providerOptions ?? {})
+  // The API rejects a system instruction, tools, or tool config next to cachedContent; they must live in the cache.
+  const cached = options.cachedContent !== undefined
+  const hasTools = flattened.tools.length > 0 && !cached
   const generationConfig = {
     maxOutputTokens: request.maxTokens,
     temperature: request.temperature,
@@ -478,7 +480,9 @@ const fromRequest = Effect.fn("Gemini.fromRequest")(function* (request: LLMReque
     safetySettings: options.safetySettings,
     serviceTier: options.serviceTier,
     systemInstruction:
-      request.system.length === 0 ? undefined : { parts: request.system.map((part) => ({ text: part.text })) },
+      cached || request.system.length === 0
+        ? undefined
+        : { parts: request.system.map((part) => ({ text: part.text })) },
     tools: hasTools
       ? [
           {
