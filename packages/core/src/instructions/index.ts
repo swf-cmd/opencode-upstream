@@ -214,6 +214,16 @@ export function applyHashDelta(values: Values, delta: Delta): Values {
   return result
 }
 
+/** The delta that `applyHashDelta` applies to `previous` to reach `current`. */
+export function hashDelta(previous: Values, current: Values): Delta {
+  return Object.fromEntries([
+    ...Object.entries(current).filter(([key, hash]) => previous[key] !== hash),
+    ...Object.keys(previous).flatMap((key) =>
+      Object.hasOwn(current, key) ? [] : [[key, Instruction.removed] as const],
+    ),
+  ])
+}
+
 export function diffByKey<A>(
   previous: ReadonlyArray<A>,
   current: ReadonlyArray<A>,

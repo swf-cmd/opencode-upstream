@@ -168,12 +168,22 @@ export const initial = Effect.fn("InstructionState.initial")(function* (
   return Instructions.renderInitial(instructions, dereference(state.initial_values, blobs))
 })
 
-/** The current instruction values, used to seed a fork's baseline. */
-export const current = Effect.fn("InstructionState.current")(function* (
+/**
+ * What a fork inherits when its copy of the history ends at `through`. It renders the parent's baseline, so its prompt
+ * prefix matches the parent's cached one. `known` is what the copied updates already told the model; when updates
+ * follow the copy it stays empty, and the fork's first step restates every change since the baseline.
+ */
+export const inherited = Effect.fn("InstructionState.inherited")(function* (
   db: DatabaseService,
   sessionID: SessionSchema.ID,
+  through: number,
 ) {
-  return (yield* find(db, sessionID))?.current_values
+  const state = yield* find(db, sessionID)
+  if (!state) return
+  return {
+    baseline: state.initial_values,
+    known: state.through_seq <= through ? Instructions.hashDelta(state.initial_values, state.current_values) : {},
+  }
 })
 
 export const preview = Effect.fn("InstructionState.preview")(function* (

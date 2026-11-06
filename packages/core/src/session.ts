@@ -339,7 +339,7 @@ const layer = Layer.effect(
       fork: Effect.fn("Session.fork")(function* (input) {
         const parent = yield* result.get(input.sessionID)
         const boundary = yield* db
-          .select({ id: SessionMessageTable.id })
+          .select({ id: SessionMessageTable.id, seq: SessionMessageTable.seq })
           .from(SessionMessageTable)
           .where(
             and(
@@ -361,14 +361,12 @@ const layer = Layer.effect(
         const inherited = yield* db
           .transaction(() =>
             Effect.all({
-              instructions: InstructionState.current(db, parent.id),
+              // A `before` boundary message is not copied.
+              instructions: InstructionState.inherited(db, parent.id, input.before ? boundary.seq - 1 : boundary.seq),
               instructionEntries: InstructionEntry.snapshot(db, parent.id),
             }),
           )
           .pipe(Effect.orDie)
-        // The fork adopts the parent's newest instruction values rather than the
-        // values in effect at the boundary; copied history may contain frozen
-        // instruction-update text the initial baseline already reflects.
         // The parent's location, not the caller's, decides whether the copy's media is stored as blobs.
         const media = yield* mediaBlob(parent)
         yield* bus
@@ -376,9 +374,13 @@ const layer = Layer.effect(
             sessionID,
             parentID: parent.id,
             boundary: { type: input.before ? "before" : "through", messageID: boundary.id },
-            ...inherited,
+            instructions: inherited.instructions?.baseline,
+            instructionEntries: inherited.instructionEntries,
           })
           .pipe(Effect.provideService(SessionBlob.ForkMedia, media))
+        // Without text, the update records what the copied history already told the model instead of repeating it.
+        if (inherited.instructions && Object.keys(inherited.instructions.known).length > 0)
+          yield* bus.publish(SessionEvent.InstructionsUpdated, { sessionID, delta: inherited.instructions.known })
         return yield* result.get(sessionID).pipe(Effect.orDie)
       }),
       get: (sessionID) => sessions.forSession(sessionID).get(),

@@ -1771,7 +1771,7 @@ describe("SessionRunnerLLM", () => {
       yield* s.session.prompt({ sessionID: forked.id, text: "Fork prompt", resume: false })
       yield* s.session.resume(forked.id)
       expect(s.requests.at(-1)?.messages[0]).toEqual(replacement[0])
-      expect(s.requests.at(-1)?.system.map((part) => part.text)).toContain("Newest instructions")
+      expect(s.requests.at(-1)?.system).toEqual(continued.system)
       expect(s.requests.at(-1)?.messages.filter((message) => message.role === "system")).toEqual([
         Message.system("Newest instructions"),
       ])
@@ -1804,7 +1804,33 @@ describe("SessionRunnerLLM", () => {
     },
   )
 
-  scenario("seeds a fork with the parent's newest instruction values", function* (s) {
+  scenario("keeps the parent's prompt prefix in a fork and restates only what its history lacks", function* (s) {
+    yield* s.runPrompt("First")
+    s.systemBaseline = "Changed context"
+    yield* s.runPrompt("Second")
+    const parent = s.requests.at(-1)!
+    const fork = Effect.fnUntraced(function* () {
+      const forked = yield* s.session.fork({ sessionID })
+      yield* s.session.prompt({ sessionID: forked.id, text: "Forked", resume: false })
+      yield* s.session.resume(forked.id)
+      return s.requests.at(-1)!
+    })
+
+    const copied = yield* fork()
+    expect(copied.system).toEqual(parent.system)
+    expect(copied.messages.slice(0, parent.messages.length).map((message) => message.content)).toEqual(
+      parent.messages.map((message) => message.content),
+    )
+    // The copied update already told the model about the current value.
+    expect(systemTexts(copied)).toEqual(["Changed context"])
+
+    s.systemBaseline = "Initial context"
+    const returned = yield* fork()
+    expect(returned.system).toEqual(parent.system)
+    expect(systemTexts(returned)).toEqual(["Changed context", "Initial context"])
+  })
+
+  scenario("seeds a fork with the parent's baseline and restates updates it did not copy", function* (s) {
     yield* s.runPrompt("First")
     s.systemBaseline = "Changed context"
     const second = yield* s.runPrompt("Second")
@@ -1815,16 +1841,15 @@ describe("SessionRunnerLLM", () => {
     expect(
       yield* s.db.select().from(InstructionStateTable).where(eq(InstructionStateTable.session_id, forked.id)).get(),
     ).toMatchObject({
-      initial_values: { "test/context": Instructions.hash("Latest context") },
-      current_values: { "test/context": Instructions.hash("Latest context") },
+      initial_values: { "test/context": Instructions.hash("Initial context") },
+      current_values: { "test/context": Instructions.hash("Initial context") },
     })
     yield* s.session.prompt({ sessionID: forked.id, text: "Forked", resume: false })
     yield* s.session.resume(forked.id)
 
-    expect(s.requests.at(-1)?.system.map((part) => part.text)).toEqual([defaultSystem, fakeIdentity, "Latest context"])
-    // Copied history keeps the frozen chronological update; no new update is emitted.
-    expect(systemTexts(s.requests.at(-1)!)).toContain("Changed context")
-    expect(systemTexts(s.requests.at(-1)!)).not.toContain("Latest context")
+    expect(s.requests.at(-1)?.system.map((part) => part.text)).toEqual([defaultSystem, fakeIdentity, "Initial context"])
+    // Copied history keeps the frozen chronological update; the one after the boundary is restated.
+    expect(systemTexts(s.requests.at(-1)!)).toEqual(["Changed context", "Latest context"])
 
     const recorded = yield* s.db
       .select()
@@ -1867,10 +1892,16 @@ describe("SessionRunnerLLM", () => {
     })
 
     expect(
+      yield* s.db.select().from(InstructionStateTable).where(eq(InstructionStateTable.session_id, child.id)).get(),
+    ).toMatchObject({
+      initial_values: { "test/context": Instructions.hash("Initial context") },
+      current_values: { "test/context": Instructions.hash("Changed context") },
+    })
+    expect(
       yield* s.db.select().from(InstructionStateTable).where(eq(InstructionStateTable.session_id, grandchild.id)).get(),
     ).toMatchObject({
-      initial_values: { "test/context": Instructions.hash("Changed context") },
-      current_values: { "test/context": Instructions.hash("Changed context") },
+      initial_values: { "test/context": Instructions.hash("Initial context") },
+      current_values: { "test/context": Instructions.hash("Initial context") },
     })
     return undefined
   })
