@@ -2004,18 +2004,20 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests.at(-1)?.system.map((part) => part.text)).toEqual(before)
   })
 
-  scenario("resyncs the instruction state when a committed revert removes an update", function* (s) {
+  scenario("keeps the baseline and restates changes when a committed revert removes an update", function* (s) {
     yield* s.runPrompt("First")
     s.systemBaseline = "Changed context"
     const second = yield* s.runPrompt("Second")
     s.systemBaseline = "Latest context"
     yield* s.runPrompt("Third")
+    const before = s.requests.at(-1)?.system
 
     // The "Latest context" update is delivered with "Third", after the boundary.
     yield* s.bus.publish(SessionEvent.RevertEvent.Committed, { sessionID, to: second.id })
     yield* s.runPrompt("Fourth")
 
-    expect(s.requests.at(-1)?.system.map((part) => part.text)).toEqual([defaultSystem, fakeIdentity, "Latest context"])
+    expect(s.requests.at(-1)?.system).toEqual(before)
+    expect(systemTexts(s.requests.at(-1)!)).toEqual(["Changed context", "Latest context"])
   })
 
   scenario("uses the selected model family prompt when the agent does not override it", function* (s) {

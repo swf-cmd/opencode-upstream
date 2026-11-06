@@ -415,6 +415,42 @@ describe("InstructionState", () => {
     }),
   )
 
+  it.effect("keeps the epoch baseline when a revert removes an update", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionSchema.ID.make("ses_instruction_rewind")
+      const { db, events } = yield* setup(sessionID)
+      let value = "Initial context"
+      const instructions = source(
+        "test/context",
+        Effect.sync(() => value),
+      )
+      const state = () =>
+        db
+          .select()
+          .from(InstructionStateTable)
+          .where(eq(InstructionStateTable.session_id, sessionID))
+          .get()
+          .pipe(Effect.orDie)
+      yield* InstructionState.prepare(db, events, instructions, sessionID)
+      value = "Changed context"
+      yield* InstructionState.prepare(db, events, instructions, sessionID)
+      const updated = (yield* state())!
+
+      yield* InstructionState.rewind(db, sessionID, updated.through_seq)
+      expect(yield* state()).toEqual({
+        ...updated,
+        through_seq: updated.epoch_start,
+        current_values: updated.initial_values,
+      })
+      // The next step restates the removed update after the surviving history.
+      yield* InstructionState.prepare(db, events, instructions, sessionID)
+      expect((yield* instructionEvents(db, sessionID)).at(-1)?.data).toMatchObject({ text: "Changed context" })
+
+      yield* InstructionState.rewind(db, sessionID, updated.epoch_start)
+      expect(yield* state()).toBeUndefined()
+    }),
+  )
+
   it.effect("assembles initial instructions without persisting a baseline", () =>
     Effect.gen(function* () {
       const sessionID = SessionSchema.ID.make("ses_instruction_generate_initial")

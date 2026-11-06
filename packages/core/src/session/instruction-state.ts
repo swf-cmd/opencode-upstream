@@ -1,6 +1,6 @@
 export * as InstructionState from "./instruction-state.js"
 
-import { and, eq, gte, inArray, sql } from "drizzle-orm"
+import { and, eq, gte, inArray, lt, sql } from "drizzle-orm"
 import { Effect, Option, Schema } from "effect"
 import type { Database } from "../database/database.js"
 import type { Bus } from "../bus.js"
@@ -141,8 +141,9 @@ export const advanceEpoch = Effect.fn("InstructionState.advanceEpoch")(function*
 })
 
 /**
- * Clears the fold only when a committed revert removed an update or the epoch start. Otherwise the
- * fold still matches the surviving history, and keeping its baseline keeps the prompt cache.
+ * Without a removed update the fold still matches the surviving history. When a committed revert removed an update
+ * but the epoch start survives, the fold falls back to the baseline: the rendered prompt, and with it the prompt
+ * cache, stays the same, and the next step restates what changed since. Only a revert past the epoch start clears it.
  */
 export const rewind = Effect.fn("InstructionState.rewind")(function* (
   db: DatabaseService,
@@ -150,8 +151,23 @@ export const rewind = Effect.fn("InstructionState.rewind")(function* (
   boundary: number,
 ) {
   yield* db
+    .update(InstructionStateTable)
+    .set({
+      through_seq: sql`${InstructionStateTable.epoch_start}`,
+      current_values: sql`${InstructionStateTable.initial_values}`,
+    })
+    .where(
+      and(
+        eq(InstructionStateTable.session_id, sessionID),
+        gte(InstructionStateTable.through_seq, boundary),
+        lt(InstructionStateTable.epoch_start, boundary),
+      ),
+    )
+    .run()
+    .pipe(Effect.orDie)
+  yield* db
     .delete(InstructionStateTable)
-    .where(and(eq(InstructionStateTable.session_id, sessionID), gte(InstructionStateTable.through_seq, boundary)))
+    .where(and(eq(InstructionStateTable.session_id, sessionID), gte(InstructionStateTable.epoch_start, boundary)))
     .run()
     .pipe(Effect.orDie)
 })
