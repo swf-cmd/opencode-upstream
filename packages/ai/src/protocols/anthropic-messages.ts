@@ -38,7 +38,6 @@ export const DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
 export const PATH = "/messages"
 export const DEFAULT_MAX_TOKENS = 32_000
 const MIN_THINKING_BUDGET = 1_024
-const DEFAULT_EFFORT = "high"
 
 const SSE_EVENTS = new Set([
   "message",
@@ -818,7 +817,11 @@ const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest, breakpoi
       const update = effortUpdate(message)
       if (update) {
         // Accepted at any position, so the text-update placement rules do not apply.
-        messages.push({ role: "system", content: [], output_config: { effort: update.effort ?? DEFAULT_EFFORT } })
+        messages.push({
+          role: "system",
+          content: [],
+          output_config: { effort: update.effort ?? defaultEffort(request.model.id) },
+        })
         continue
       }
       if (splitsLocalToolResults(request.messages, index))
@@ -918,6 +921,16 @@ const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest, breakpoi
 // The model-ID checks below are fallbacks for models that leave `capabilities.reasoning.updates`,
 // `capabilities.systemUpdates` and `compatibility.supportsThinkingBlockBinding` unset.
 const isThinkingOff = Schema.is(AnthropicThinkingDisabled)
+
+// A switch back to the default variant must name the effort that omitting it gives: medium from Claude Opus 5.5 and
+// Haiku 5.5 on, high on every other Claude model. Anything else keeps the turn at a level the user did not pick.
+const defaultEffort = (id: string) => {
+  const version = claudeVersion(id)
+  const medium =
+    (version?.family === "opus" || version?.family === "haiku") &&
+    (version.major > 5 || (version.major === 5 && version.minor >= 5))
+  return medium ? "medium" : "high"
+}
 
 // Per-turn effort started with Claude Opus 5 and every Claude 5.1 model; later versions of any family inherit it.
 const supportsEffortUpdates = (request: LLMRequest) => {

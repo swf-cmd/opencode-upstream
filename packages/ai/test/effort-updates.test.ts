@@ -125,6 +125,39 @@ describe("Anthropic Messages effort updates", () => {
     }),
   )
 
+  it.effect("sends each model's own default for a switch back to it", () =>
+    Effect.gen(function* () {
+      for (const [id, expected] of [
+        ["claude-opus-5-5", "medium"],
+        ["claude-haiku-5-5", "medium"],
+        ["anthropic/claude-opus-5.5", "medium"],
+        ["claude-sonnet-5-5", "high"],
+        ["claude-fable-5-1", "high"],
+        ["claude-opus-5", "high"],
+      ] as const) {
+        const prepared = yield* compileRequest(
+          ai.request({
+            model: anthropic(id),
+            messages: [
+              Message.user("One."),
+              Message.effort({ effort: "high" }),
+              Message.user("Two."),
+              Message.effort({ previous: "high" }),
+              Message.user("Three."),
+            ],
+            cache: "none",
+          }),
+        )
+
+        expect(prepared.body.output_config).toBeUndefined()
+        expect(systemMessages(prepared.body).map((message) => message.output_config)).toEqual([
+          { effort: "high" },
+          { effort: expected },
+        ])
+      }
+    }),
+  )
+
   it.effect("requests the mid-conversation output config beta only when markers are sent", () =>
     Effect.gen(function* () {
       for (const [model, expected] of [
