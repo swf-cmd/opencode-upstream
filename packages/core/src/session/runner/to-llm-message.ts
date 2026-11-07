@@ -207,29 +207,40 @@ const assistant = (message: SessionMessage.Assistant, model: Model.Ref, provider
 
 const EFFORT_VARIANTS = new Set<string>(ReasoningEfforts)
 
-const variantEffort = (variant: Model.VariantID | undefined) => {
-  if (variant === undefined || variant === "default") return { effort: undefined }
+// The default variant sends the effort its settings configure, or none, which runs the model's default.
+const variantEffort = (variant: Model.VariantID | undefined, defaultEffort: string | undefined) => {
+  if (variant === undefined || variant === "default") return { effort: defaultEffort }
   return EFFORT_VARIANTS.has(variant) ? { effort: variant } : undefined
 }
 
-const modelSwitched = (message: SessionMessage.ModelSelected, model: Model.Ref): Message[] => {
+const modelSwitched = (
+  message: SessionMessage.ModelSelected,
+  model: Model.Ref,
+  defaultEffort: string | undefined,
+): Message[] => {
   const previous = message.previous
   if (previous === undefined) return []
   const same = (ref: Model.Ref) => ref.providerID === model.providerID && ref.id === model.id
   if (!same(message.model) || !same(previous)) return []
-  const to = variantEffort(message.model.variant)
-  const from = variantEffort(previous.variant)
-  if (to === undefined || from === undefined) return []
+  const to = variantEffort(message.model.variant, defaultEffort)
+  const from = variantEffort(previous.variant, defaultEffort)
+  // A switch between the default variant and the effort its settings configure changes nothing on the wire.
+  if (to === undefined || from === undefined || to.effort === from.effort) return []
   return [Message.effort({ effort: to.effort, previous: from.effort })]
 }
 
-function toLLMMessage(message: SessionMessage.Info, model: Model.Ref, providerMetadataKey: string): Message[] {
+function toLLMMessage(
+  message: SessionMessage.Info,
+  model: Model.Ref,
+  providerMetadataKey: string,
+  defaultEffort: string | undefined,
+): Message[] {
   switch (message.type) {
     case "agent-switched":
     case "idle":
       return []
     case "model-switched":
-      return modelSwitched(message, model)
+      return modelSwitched(message, model, defaultEffort)
     case "location-switched":
       return [
         Message.make({
@@ -293,9 +304,13 @@ function toLLMMessage(message: SessionMessage.Info, model: Model.Ref, providerMe
   }
 }
 
-/** Translate projected Session history into canonical @opencode/ai context. */
+/**
+ * Translate projected Session history into canonical @opencode/ai context. `defaultEffort` is the effort the model's
+ * default variant sends, so that effort switches to and from it carry the effort the requests actually used.
+ */
 export const toLLMMessages = (
   messages: readonly SessionMessage.Info[],
   model: Model.Ref,
   providerMetadataKey: string = model.providerID,
-) => messages.flatMap((message) => toLLMMessage(message, model, providerMetadataKey))
+  defaultEffort?: string,
+) => messages.flatMap((message) => toLLMMessage(message, model, providerMetadataKey, defaultEffort))

@@ -259,6 +259,18 @@ Earlier work
       ])
     })
 
+    test("maps the default variant to the effort its settings configure", () => {
+      expect(toLLMMessages([switched(ref("high"), ref())], ref("high"), "provider", "max")).toEqual([
+        Message.effort({ effort: "high", previous: "max" }),
+      ])
+      expect(toLLMMessages([switched(ref("default"), ref("high"))], ref(), "provider", "max")).toEqual([
+        Message.effort({ effort: "max", previous: "high" }),
+      ])
+      // The default variant already sends that effort, so nothing changes on the wire.
+      expect(toLLMMessages([switched(ref("default"), ref("max"))], ref(), "provider", "max")).toEqual([])
+      expect(toLLMMessages([switched(ref("max"), ref())], ref("max"), "provider", "max")).toEqual([])
+    })
+
     test("ignores switches that are not effort changes on the requested model", () => {
       const other = Model.Ref.make({ id: Model.ID.make("other"), providerID: Provider.ID.make("provider") })
       expect(toLLMMessages([switched(ref("low"))], ref("low"))).toEqual([])

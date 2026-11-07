@@ -53,6 +53,7 @@ export const resolved = (
     readonly limit: Model.Info["limit"]
     readonly compaction?: Provider.Compaction
     readonly transport?: Provider.Transport
+    readonly defaultEffort?: string
   },
 ): Resolved => ({
   model,
@@ -66,6 +67,7 @@ export const resolved = (
   limit: options.limit,
   compaction: options.compaction,
   transport: options.transport,
+  ...(options.defaultEffort === undefined ? {} : { defaultEffort: options.defaultEffort }),
 })
 
 const layer = Layer.effect(

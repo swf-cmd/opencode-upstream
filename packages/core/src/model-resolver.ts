@@ -131,6 +131,8 @@ export interface Resolved {
   readonly compaction?: Provider.Compaction
   /** Prompt-cache settings from the provider, model and variant; omitted keeps the provider defaults. */
   readonly cache?: Provider.Cache
+  /** Reasoning effort the default variant sends, from provider and model settings; omitted runs the model's default. */
+  readonly defaultEffort?: string
   /** Provider transport policy; omitted means HTTP. */
   readonly transport?: Provider.Transport
   /** Milliseconds without streamed data before a WebSocket exchange fails; `false` disables the limit. */
@@ -185,6 +187,12 @@ export const withVariant = (
         }
       : model,
   )
+}
+
+/** The effort a model's settings configure: Anthropic's `effort`, or `reasoningEffort` on OpenAI routes. */
+const configuredEffort = (settings: Readonly<Record<string, unknown>> | undefined) => {
+  const effort = settings?.effort ?? settings?.reasoningEffort
+  return typeof effort === "string" ? effort : undefined
 }
 
 export interface Dependencies {
@@ -502,6 +510,10 @@ export const layer = Layer.effect(
         limit: selected.limit,
         compaction: runtimeInfo.settings?.compaction,
         cache: runtimeInfo.settings?.cache,
+        // Effort switches name the default variant by the effort it sends, which the settings may configure.
+        defaultEffort: configuredEffort(
+          Provider.mergeOverlay(provider?.settings, Provider.modelSettings(selected.settings)),
+        ),
         transport: provider?.settings?.transport,
         chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
       }

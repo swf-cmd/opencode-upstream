@@ -221,6 +221,7 @@ const makeRunnerState = (compaction?: SessionRunnerModel.Resolved["compaction"])
   return {
     currentModel: model,
     compaction,
+    defaultEffort: undefined as string | undefined,
     modelResolveHook: resolvesModel,
     systemBaseline: "Initial context",
     systemRemoved: false,
@@ -342,6 +343,7 @@ const layer = Layer.unwrap(
               limit: modelLimits.get(String(selected.id)) ?? defaultModelLimit,
               variant: session.model?.variant,
               compaction: state.compaction,
+              defaultEffort: state.defaultEffort,
             })
           }),
         ),
@@ -2345,6 +2347,63 @@ describe("SessionRunnerLLM", () => {
         { role: "user" },
       ],
     })
+  })
+
+  scenario("keeps effort updates append-only through the default variant's configured effort", function* (s) {
+    // The model's settings configure the effort its default variant sends.
+    s.defaultEffort = "max"
+    const opus = LanguageModel.make({ id: "claude-opus-5-5", provider: "anthropic", route: AnthropicMessages.route })
+    const model = { id: ID.make("claude-opus-5-5"), providerID: Provider.ID.make("anthropic") }
+    const select = (variant: string, effort: string) =>
+      Effect.gen(function* () {
+        yield* s.bus.publish(SessionEvent.ModelSelected, {
+          sessionID,
+          model: { ...model, variant: Model.VariantID.make(variant) },
+        })
+        s.currentModel = LanguageModel.update(opus, { options: { providerOptions: { effort } } })
+      })
+    for (const [variant, effort, prompt] of [
+      ["max", "max", "First"],
+      ["high", "high", "Second"],
+      ["default", "max", "Third"],
+      ["max", "max", "Fourth"],
+    ] as const) {
+      yield* select(variant, effort)
+      yield* s.llm.push(TestLLM.text(`${prompt} answer`, `text-${variant}`))
+      yield* s.runPrompt(prompt)
+    }
+
+    const strip = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(strip)
+        : value !== null && typeof value === "object"
+          ? Object.fromEntries(
+              Object.entries(value)
+                .filter(([key]) => key !== "cache_control")
+                .map(([key, entry]) => [key, strip(entry)]),
+            )
+          : value
+    type Body = { output_config?: unknown; messages: Array<{ role: string; output_config?: unknown }> }
+    const bodies = yield* Effect.forEach(s.requests, (request) =>
+      compileRequest(request).pipe(Effect.map((compiled) => compiled.body as Body)),
+    )
+    // The conversation keeps its first effort; each later request repeats the previous one's messages unchanged.
+    expect(bodies.map((body) => body.output_config)).toEqual([
+      { effort: "max" },
+      { effort: "max" },
+      { effort: "max" },
+      { effort: "max" },
+    ])
+    for (const [index, body] of bodies.slice(1).entries()) {
+      const previous = strip(bodies[index]!.messages) as unknown[]
+      expect((strip(body.messages) as unknown[]).slice(0, previous.length)).toEqual(previous)
+    }
+    expect(
+      bodies
+        .at(-1)!
+        .messages.filter((message) => message.role === "system")
+        .map((message) => message.output_config),
+    ).toEqual([{ effort: "high" }, { effort: "max" }])
   })
 
   scenario("preserves instruction values while a source is temporarily unavailable", function* (s) {

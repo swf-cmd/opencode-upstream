@@ -206,6 +206,25 @@ retryIt.effect("retries an overloaded provider at most three times", () =>
   }),
 )
 
+resolverIt.effect("names the effort the settings configure for the default variant", () =>
+  Effect.gen(function* () {
+    const resolver = yield* ModelResolver.Service
+    const configured = Info.make({
+      ...selected,
+      settings: { effort: "max" },
+      variants: [{ id: VariantID.make("high"), settings: { effort: "high" }, headers: {}, body: {} }],
+    })
+
+    // A selected variant overlays its own effort, but the default variant still sends the configured one.
+    expect((yield* resolver.resolveModel(configured, VariantID.make("high"))).defaultEffort).toBe("max")
+    expect((yield* resolver.resolveModel(configured)).defaultEffort).toBe("max")
+    expect(
+      (yield* resolver.resolveModel(Info.make({ ...selected, settings: { reasoningEffort: "low" } }))).defaultEffort,
+    ).toBe("low")
+    expect((yield* resolver.resolveModel(selected)).defaultEffort).toBeUndefined()
+  }),
+)
+
 resolverIt.effect("resolves dynamic models with their catalog metadata", () =>
   Effect.gen(function* () {
     const resolver = yield* ModelResolver.Service
