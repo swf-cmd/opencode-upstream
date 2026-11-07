@@ -151,6 +151,18 @@ describe("WebSearchTool registration", () => {
     }),
   )
 
+  // Tools open every cached prompt. A year read at module load changed them, and missed every cached conversation,
+  // the first time the server started in a new year.
+  it.effect("keeps the clock out of its description", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup
+      const definition = (yield* toolDefinitions(fixture.registry)).find((tool) => tool.name === "websearch")
+
+      expect(definition?.description).toBeString()
+      expect(definition?.description).not.toContain(String(new Date().getFullYear()))
+    }),
+  )
+
   it.effect("keeps normalized results in structured output", () =>
     Effect.gen(function* () {
       const fixture = yield* setup

@@ -17,9 +17,11 @@ const httpErrors = new Map([
   [401, "Web search authentication failed (HTTP 401)"],
 ])
 
+// Kept free of the clock: tools open every cached prompt. The date reaches the model through the instructions, whose
+// updates are appended after the cached prefix.
 export const description = `Search the web using the user's selected search integration. Use this for current information beyond knowledge cutoff.
 
-The current year is ${new Date().getFullYear()}. Use this year when searching for recent information or current events.`
+When searching for recent information or current events, use the year of today's date from your instructions, not the year your training data suggests.`
 
 export const Input = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),
