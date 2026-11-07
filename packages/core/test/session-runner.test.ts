@@ -2406,6 +2406,49 @@ describe("SessionRunnerLLM", () => {
     ).toEqual([{ effort: "high" }, { effort: "max" }])
   })
 
+  scenario("keeps the top-level effort when a revert removes a variant switch", function* (s) {
+    const opus = LanguageModel.make({ id: "claude-opus-5-5", provider: "anthropic", route: AnthropicMessages.route })
+    const model = { id: ID.make("claude-opus-5-5"), providerID: Provider.ID.make("anthropic") }
+    const select = (variant: string) =>
+      Effect.gen(function* () {
+        yield* s.bus.publish(SessionEvent.ModelSelected, {
+          sessionID,
+          model: { ...model, variant: Model.VariantID.make(variant) },
+        })
+        s.currentModel = LanguageModel.update(opus, { options: { providerOptions: { effort: variant } } })
+      })
+    yield* select("max")
+    yield* s.llm.push(TestLLM.text("First answer", "text-first"))
+    yield* s.runPrompt("First")
+    yield* s.llm.push(TestLLM.text("Second answer", "text-second"))
+    const second = yield* s.runPrompt("Second")
+    yield* select("high")
+    yield* s.llm.push(TestLLM.text("Third answer", "text-third"))
+    yield* s.runPrompt("Third")
+    // Rolling back past the switch keeps the variant the session selected last.
+    yield* s.bus.publish(SessionEvent.RevertEvent.Committed, { sessionID, to: second.id })
+    yield* s.llm.push(TestLLM.text("Fourth answer", "text-fourth"))
+    yield* s.runPrompt("Fourth")
+
+    type Body = {
+      output_config?: unknown
+      messages: Array<{ role: string; content?: unknown; output_config?: unknown }>
+    }
+    const bodies = yield* Effect.forEach(s.requests, (request) =>
+      compileRequest({ ...request, cache: "none" }).pipe(Effect.map((compiled) => compiled.body as Body)),
+    )
+    expect(bodies.map((body) => body.output_config)).toEqual([
+      { effort: "max" },
+      { effort: "max" },
+      { effort: "max" },
+      { effort: "max" },
+    ])
+    const last = bodies.at(-1)!
+    expect(last.messages.slice(0, 2)).toEqual(bodies[1]!.messages.slice(0, 2))
+    expect(last.messages.map((message) => message.role)).toEqual(["user", "assistant", "system", "user"])
+    expect(last.messages[2]).toEqual({ role: "system", content: [], output_config: { effort: "high" } })
+  })
+
   scenario("preserves instruction values while a source is temporarily unavailable", function* (s) {
     yield* s.runPrompt("First")
     yield* s.bus.publish(SessionEvent.ModelSelected, {

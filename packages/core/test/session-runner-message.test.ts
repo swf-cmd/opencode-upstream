@@ -271,6 +271,59 @@ Earlier work
       expect(toLLMMessages([switched(ref("max"), ref())], ref("max"), "provider", "max")).toEqual([])
     })
 
+    const reply = (value: string, variant?: string) =>
+      SessionMessage.Assistant.make({
+        id: id(value),
+        type: "assistant",
+        agent: build,
+        model: ref(variant),
+        content: [SessionMessage.AssistantText.make({ type: "text", text: value })],
+        time: { created, completed: created },
+      })
+    const prompt = (value: string) =>
+      SessionMessage.User.make({ id: id(value), type: "user", text: value, time: { created } })
+    const text = (message: ReturnType<typeof toLLMMessages>[number]) =>
+      message.content.map((part) => (part.type === "text" ? part.text : part.type)).join("")
+
+    test("restates a switch that a revert or an earlier fork point dropped from history", () => {
+      // The replies ran at max, the request runs at high, and no recorded switch explains it.
+      expect(
+        toLLMMessages([prompt("one"), reply("first", "max"), prompt("two"), reply("second", "max")], ref("high")).map(
+          text,
+        ),
+      ).toEqual(["one", "first", "two", "second", "effort"])
+      const restated = toLLMMessages([prompt("one"), reply("first", "max"), prompt("two")], ref("high"))
+      expect(restated[2]).toEqual(Message.effort({ effort: "high", previous: "max" }))
+      // A reply that ran at another variant than the one before it gets the switch right after that earlier reply.
+      expect(
+        toLLMMessages([prompt("one"), reply("first", "max"), prompt("two"), reply("second", "high")], ref("high")),
+      ).toEqual([
+        ...toLLMMessages([prompt("one"), reply("first", "max")], ref("max")),
+        Message.effort({ effort: "high", previous: "max" }),
+        ...toLLMMessages([prompt("two"), reply("second", "high")], ref("high")),
+      ])
+    })
+
+    test("does not restate a switch the history still records", () => {
+      expect(
+        toLLMMessages(
+          [
+            prompt("one"),
+            reply("first", "max"),
+            switched(ref("high"), ref("max")),
+            prompt("two"),
+            reply("second", "high"),
+          ],
+          ref("high"),
+        ).map(text),
+      ).toEqual(["one", "first", "effort", "two", "second"])
+      // The default variant already sends the effort its settings configure.
+      expect(toLLMMessages([prompt("one"), reply("first")], ref("max"), "provider", "max").map(text)).toEqual([
+        "one",
+        "first",
+      ])
+    })
+
     test("ignores switches that are not effort changes on the requested model", () => {
       const other = Model.Ref.make({ id: Model.ID.make("other"), providerID: Provider.ID.make("provider") })
       expect(toLLMMessages([switched(ref("low"))], ref("low"))).toEqual([])

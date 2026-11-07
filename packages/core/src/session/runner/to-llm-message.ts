@@ -213,6 +213,20 @@ const variantEffort = (variant: Model.VariantID | undefined, defaultEffort: stri
   return EFFORT_VARIANTS.has(variant) ? { effort: variant } : undefined
 }
 
+const effortSwitch = (
+  to: Model.VariantID | undefined,
+  from: Model.VariantID | undefined,
+  defaultEffort: string | undefined,
+): Message[] => {
+  const next = variantEffort(to, defaultEffort)
+  const previous = variantEffort(from, defaultEffort)
+  // A switch between the default variant and the effort its settings configure changes nothing on the wire.
+  if (next === undefined || previous === undefined || next.effort === previous.effort) return []
+  return [Message.effort({ effort: next.effort, previous: previous.effort })]
+}
+
+const sameModel = (ref: Model.Ref, model: Model.Ref) => ref.providerID === model.providerID && ref.id === model.id
+
 const modelSwitched = (
   message: SessionMessage.ModelSelected,
   model: Model.Ref,
@@ -220,13 +234,8 @@ const modelSwitched = (
 ): Message[] => {
   const previous = message.previous
   if (previous === undefined) return []
-  const same = (ref: Model.Ref) => ref.providerID === model.providerID && ref.id === model.id
-  if (!same(message.model) || !same(previous)) return []
-  const to = variantEffort(message.model.variant, defaultEffort)
-  const from = variantEffort(previous.variant, defaultEffort)
-  // A switch between the default variant and the effort its settings configure changes nothing on the wire.
-  if (to === undefined || from === undefined || to.effort === from.effort) return []
-  return [Message.effort({ effort: to.effort, previous: from.effort })]
+  if (!sameModel(message.model, model) || !sameModel(previous, model)) return []
+  return effortSwitch(message.model.variant, previous.variant, defaultEffort)
 }
 
 function toLLMMessage(
@@ -313,4 +322,25 @@ export const toLLMMessages = (
   model: Model.Ref,
   providerMetadataKey: string = model.providerID,
   defaultEffort?: string,
-) => messages.flatMap((message) => toLLMMessage(message, model, providerMetadataKey, defaultEffort))
+) => {
+  const result: Message[] = []
+  // A revert past a variant switch, or a fork before one, keeps the replies but drops the switch, and the request would
+  // change its top-level effort instead, losing the cached prefix. Replies record the variant they ran with, so restate
+  // a switch the history no longer shows after the reply before it, where the switch happened.
+  let variant: Model.VariantID | undefined | null = null
+  let afterReply = 0
+  const restate = (to: Model.VariantID | undefined) => {
+    if (variant !== null) result.splice(afterReply, 0, ...effortSwitch(to, variant, defaultEffort))
+  }
+  for (const message of messages) {
+    if (message.type === "model-switched" && sameModel(message.model, model)) variant = message.model.variant
+    if (message.type === "assistant" && sameModel(message.model, model)) {
+      restate(message.model.variant)
+      variant = message.model.variant
+    }
+    result.push(...toLLMMessage(message, model, providerMetadataKey, defaultEffort))
+    if (message.type === "assistant") afterReply = result.length
+  }
+  restate(model.variant)
+  return result
+}
