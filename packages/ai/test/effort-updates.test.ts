@@ -164,6 +164,14 @@ describe("Anthropic Messages effort updates", () => {
       )
       expect(lowered.output_config).toBeUndefined()
       expect(systemMessages(lowered)).toEqual([{ role: "system", content: [], output_config: { effort: "low" } }])
+
+      // A session that started with thinking off never sends that variant as an effort.
+      const started = yield* compile(
+        [...before, Message.effort({ effort: "high", previous: "none" }), Message.user("Two.")],
+        "high",
+      )
+      expect(started.output_config).toBeUndefined()
+      expect(systemMessages(started)).toEqual([{ role: "system", content: [], output_config: { effort: "high" } }])
     }),
   )
 
