@@ -27,7 +27,7 @@ import {
 } from "../schema/index.js"
 import { JsonObject, knownString, optionalArray, optionalNull, ProviderShared, withUntypedFrames } from "./shared.js"
 import { classifyProviderFailure } from "../provider-error.js"
-import { effortUpdate, resolveEffortUpdates } from "../effort-updates.js"
+import { effortUpdate, foldEffortUpdates, resolveEffortUpdates } from "../effort-updates.js"
 import * as Cache from "./utils/cache.js"
 import { claudeVersion, supportsThinkingBlockBinding, THINKING_BINDING_BETA } from "./utils/claude-model.js"
 import { Lifecycle } from "./utils/lifecycle.js"
@@ -38,6 +38,8 @@ export const DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
 export const PATH = "/messages"
 export const DEFAULT_MAX_TOKENS = 32_000
 const MIN_THINKING_BUDGET = 1_024
+// The `output_config.effort` levels. Thinking-off variants ("none") are recorded as efforts but are not one.
+const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"])
 
 const SSE_EVENTS = new Set([
   "message",
@@ -969,7 +971,10 @@ const fromRequest = Effect.fn("AnthropicMessages.fromRequest")(function* (reques
   const management = options.contextManagement
   const outputConfig = options.output_config ?? options.outputConfig
   const format = outputConfig?.format ?? undefined
-  const updates = resolveEffortUpdates(request, options.effort ?? outputConfig?.effort ?? undefined)
+  const updates = resolveEffortUpdates(
+    foldEffortUpdates(request, (effort) => EFFORTS.has(effort)),
+    options.effort ?? outputConfig?.effort ?? undefined,
+  )
   // Allocate the 4-breakpoint budget in invalidation order: tools → system →
   // messages. Tools live highest in the cache hierarchy, so when callers
   // over-mark we keep their tool hints and shed the message-tail ones first.

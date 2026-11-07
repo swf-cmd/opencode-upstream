@@ -125,6 +125,48 @@ describe("Anthropic Messages effort updates", () => {
     }),
   )
 
+  it.effect("folds a thinking-off stretch back to the effort before it", () =>
+    Effect.gen(function* () {
+      const thinking = { type: "adaptive", display: "summarized" } as const
+      const compile = (messages: ReadonlyArray<Message>, effort: string) =>
+        compileRequest(
+          ai.request({ model: opus5, messages: [...messages], providerOptions: { thinking, effort }, cache: "none" }),
+        ).pipe(Effect.map((prepared) => prepared.body))
+      const before = [Message.user("One."), Message.assistant("Answer.")]
+
+      // high -> none -> high sends the request it sent before the stretch, with the stretch's turns appended.
+      const roundTrip = yield* compile(
+        [
+          ...before,
+          Message.effort({ effort: "none", previous: "high" }),
+          Message.user("Two."),
+          Message.assistant("Quick answer."),
+          Message.effort({ effort: "high", previous: "none" }),
+          Message.user("Three."),
+        ],
+        "high",
+      )
+      const plain = yield* compile([...before, Message.user("Two.")], "high")
+      expect(roundTrip.output_config).toEqual(plain.output_config)
+      expect(systemMessages(roundTrip)).toEqual([])
+      expect(roundTrip.messages.slice(0, 3)).toEqual(plain.messages)
+
+      // default -> none -> low keeps the frozen default and switches once, from it.
+      const lowered = yield* compile(
+        [
+          ...before,
+          Message.effort({ effort: "none" }),
+          Message.user("Two."),
+          Message.effort({ effort: "low", previous: "none" }),
+          Message.user("Three."),
+        ],
+        "low",
+      )
+      expect(lowered.output_config).toBeUndefined()
+      expect(systemMessages(lowered)).toEqual([{ role: "system", content: [], output_config: { effort: "low" } }])
+    }),
+  )
+
   it.effect("sends each model's own default for a switch back to it", () =>
     Effect.gen(function* () {
       for (const [id, expected] of [
